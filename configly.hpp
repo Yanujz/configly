@@ -95,7 +95,7 @@ public:
 
   // Register a callback for changes to a specific member
   template <typename MemberPtr>
-  void onChange(MemberPtr member, void (*fn)(decltype(m_userConfig.*member))) {
+  Configly<T>& onChange(MemberPtr member, void (*fn)(decltype(m_userConfig.*member))) {
     union {
       MemberPtr ptr;
       size_t index;
@@ -103,6 +103,7 @@ public:
 
     converter.ptr = member;
     m_callbacks[converter.index] = reinterpret_cast<void (*)(const void *)>(fn);
+    return *this;
   }
 
   // Get the value of a specific member

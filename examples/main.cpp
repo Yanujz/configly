@@ -4,13 +4,13 @@
 // Define the configuration structure that holds settings
 struct Config
 {
-    int   volume;  
+    int   volume;
     float brightness;
 };
 
 // Default configuration values
-Config defaultConfig = { 50, 0.75f };  // Default volume is 50, default brightness is 0.75
-Config userConfig;  // User-defined configuration (initially empty)
+Config defaultConfig = { 50, 0.75f }; // Default volume is 50, default brightness is 0.75
+Config userConfig;                    // User-defined configuration (initially empty)
 
 int main()
 {
@@ -40,12 +40,11 @@ int main()
 
     // Register callback functions to handle changes to the 'volume' and 'brightness' parameters.
     // These functions will be called when the respective parameters are changed.
-    Configly<Config>::instance().onChange(&Config::volume, [](int &newVolume) -> void {
+    Configly<Config>::instance()
+    .onChange(&Config::volume, [](int &newVolume) -> void {
         // Callback for volume changes
         std::cout << "Volume changed to: " << newVolume << std::endl;
-    });
-
-    Configly<Config>::instance().onChange(&Config::brightness, [](float &brightness) -> void {
+    }).onChange(&Config::brightness, [](float &brightness) -> void {
         // Callback for brightness changes
         std::cout << "Brightness changed to: " << brightness << std::endl;
     });
