@@ -34,19 +34,41 @@ int main()
         return false;  // Return 'false' to indicate load failure or 'true' if successful
     });
 
+
+    int currentVolume = -1;
+
+    if(Configly<Config>::instance().get(&Config::volume, currentVolume))
+    {
+        std::cout << "Current volume before set: " << currentVolume << std::endl;
+    }
+    else
+    {
+        std::cout << "Fail to get volume value" << std::endl;
+    }
+
     // Modify the 'volume' configuration parameter using the 'set()' function
     // This will set the volume to 80 in the user configuration
     Configly<Config>::instance().set(&Config::volume, 80);
-
+    if(Configly<Config>::instance().get(&Config::volume, currentVolume))
+    {
+        std::cout << "Current volume after set: " << currentVolume << std::endl;
+    }
+    else
+    {
+        std::cout << "Fail to get volume value" << std::endl;
+    }
+    
+    std::cout << "------------------------" << std::endl;
+    
     // Register callback functions to handle changes to the 'volume' and 'brightness' parameters.
     // These functions will be called when the respective parameters are changed.
     Configly<Config>::instance()
-    .onChange(&Config::volume, [](int &newVolume) -> void {
+    .onChange(&Config::volume, [](const int &newVolume) -> void {
         // Callback for volume changes
-        std::cout << "Volume changed to: " << newVolume << std::endl;
-    }).onChange(&Config::brightness, [](float &brightness) -> void {
+        std::cout << "[CB] Volume changed to: " << newVolume << std::endl;
+    }).onChange(&Config::brightness, [](const float &brightness) -> void {
         // Callback for brightness changes
-        std::cout << "Brightness changed to: " << brightness << std::endl;
+        std::cout << "[CB] Brightness changed to: " << brightness << std::endl;
     });
 
     // Trigger the callback by changing the 'volume' value to 90
@@ -55,11 +77,13 @@ int main()
 
     // Trigger the callback by changing the 'brightness' value to 10
     // This will call the callback registered for 'brightness'
-    Configly<Config>::instance().set(&Config::brightness, 10);
+    Configly<Config>::instance().set(&Config::brightness, 10.0f);
+
+    std::cout << "------------Set all fields------------" << std::endl;
 
     // Set all configuration values at once using 'setAll()'
     // This will set the 'volume' to 10 and 'brightness' to 20 in the user configuration
-    Configly<Config>::instance().setAll({ 10, 20 });
+    Configly<Config>::instance().setAll({ 10, 20.0f });
 
     return 0;
 }
