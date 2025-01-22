@@ -1,8 +1,9 @@
 # Configly - Flexible Configuration Management for C++
 
-Configly is a flexible, callback-driven configuration management library for C++. It allows you to manage, update, and restore your configuration parameters with ease. This library is ideal for applications that need dynamic configuration management and real-time notifications on changes.
+Configly is a flexible, callback-driven configuration management library for C++. It allows you to manage, update, and restore configuration parameters with ease. This library is ideal for applications that require dynamic configuration management and real-time notifications for configuration changes.
 
-Note: Configly is not thread-safe. If you need to use it in a multi-threaded environment, make sure to synchronize access to the configuration manually.
+Configly provides a centralized approach to configuration, enabling the sharing of configuration state across the entire application. All components within the program can access and modify the configuration without needing to duplicate or manually pass data. Any changes made to the configuration are immediately visible throughout the program, making it easier to handle dynamic parameters.
+
 
 ## Features
 - Dynamic configuration management with flexible data types.
