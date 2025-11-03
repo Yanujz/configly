@@ -1,137 +1,193 @@
-# Configly - 
+# Configly
 
 ![Language](https://img.shields.io/badge/C%2B%2B-17-blue.svg)
 ![License](https://img.shields.io/badge/License-MIT-green.svg)
 ![Type](https://img.shields.io/badge/Type-Header--Only-orange.svg)
 ![Build Status](https://img.shields.io/badge/Build-Passing-brightgreen.svg)
 
-**Configly** is a professional, header-only, type-safe, and thread-safe configuration manager for C++, designed specifically for embedded and real-time systems.
+**Configly** is a small, header-only configuration manager for C++ aimed at embedded / real-time code where:
 
-It is a scalpel, not a hammer. It is the ideal solution when you need to access shared configuration data from multiple contexts (e.g., RTOS tasks, ISRs) without introducing blocking, latency, or race conditions.
+- config is **read very often** (fast paths, high-priority tasks, ISRs),
+- config is **written rarely** (CLI, comms, low-priority tasks),
+- you **cannot afford** to block readers just because someone is updating a value.
 
-## Core Philosophy: The Right Tool for Concurrency
+It gives you **lock-free reads** over an entire config struct, while still letting you update the whole thing or a single field and get change callbacks.
 
-In many systems, configuration data is **written rarely** but **read frequently** from multiple high-priority tasks. Using a traditional mutex (a hammer) to protect this data is inefficient, as it can block a critical reader task even when no writing is occurring, leading to jitter and priority inversion.
+No threads spawned, no heap, no RTTI, no nonsense.
 
-Configly uses a **seqlock** mechanism (a scalpel). This allows for virtually unlimited readers to access the configuration data **without ever being blocked**. Writers are also highly efficient, ensuring minimal impact on the system. This makes Configly perfect for high-performance, real-time applications.
+---
+
+## Why?
+
+The usual approach for “shared config” is:
+
+- put everything in a struct,
+- guard it with a mutex,
+- hope readers don’t block.
+
+That works on desktops, but on MCUs / RTOS you can’t have a high-priority task blocked because a low-priority task was updating a value.
+
+Configly solves that with a **double-buffer + per-buffer sequence** design:
+
+- writers write into the inactive buffer,
+- mark it stable,
+- flip an atomic index,
+- readers always read a stable snapshot,
+- if a reader notices a race, it just retries (no blocking).
+
+So: **readers are never blocked by writers**.
+
+---
 
 ## Key Features
 
-* **Zero Heap Allocation**: Predictable, deterministic behavior suitable for high-reliability systems where dynamic memory is forbidden.
-* **Thread-Safe by Design**: Guarantees safe concurrent access with a lock-free read path.
-* **Type-Safe API**: Catches type-related errors at compile-time, not at runtime.
-* **Header-Only**: Just include `configly.hpp` in your project to get started.
-* **Modern C++**: Built with C++17 features for a clean, safe, and expressive API.
-* **Tested**: Includes a comprehensive test suite to verify correctness and concurrency safety.
+- **Header-only** — just drop in `configly.hpp`.
+- **C++17** — uses structured bindings / `std::atomic` / `std::array`.
+- **Trivially copyable configs** — simple POD-style structs.
+- **Lock-free read path** — readers don’t take locks.
+- **Double-buffered + seqcheck** — prevents torn reads even under heavy writers.
+- **Per-field callbacks** — run code when a specific member changes.
+- **No heap** — suitable for embedded / safety-leaning targets.
+- **Optional save/load hooks** — plug in flash/EEPROM/persistent storage.
+
+---
+
+## How It Works (short)
+
+1. You define a struct, e.g.:
+
+   ```cpp
+   struct AppConfig {
+       uint32_t baud;
+       bool     logging;
+   };
+2. You tell Configly what the defaults are.
+3. Readers call getAll(...) or get(&AppConfig::baud) — these are lock-free.
+4. Writers call update(...) (whole struct) or set(...) (single member).
+5. If a field changed and you registered a callback for it, Configly calls it.
+
+Internally it keeps two copies of your struct and an atomic “which one is current” index. Updates go to the inactive one, then the index flips. A per-buffer sequence number makes sure a reader never consumes a half-written buffer.
+
+
+## Requirements
+- C++17 or newer
+- `std::atomic` available
+- Struct must be trivially copyable (most “config” structs are)
+
 
 ## Installation
-
-Configly is a header-only library, making integration simple.
-
-### 1. Simple Integration (Copy-Paste)
-
-1.  Copy the `include/configly` directory into your project's include path.
-2.  Include the header in your source files:
-    ```cpp
-    #include <configly/configly.hpp>
-    ```
-
-### 2. CMake Integration (Recommended)
-
-You can integrate Configly using CMake's `add_subdirectory` or `FetchContent`.
-
-**Using `add_subdirectory`:**
-
-1.  Clone this repository into your project (e.g., in a `lib/` folder).
-2.  In your main `CMakeLists.txt`:
-    ```cmake
-    # Add the configly directory to your build
-    add_subdirectory(lib/configly)
-
-    # Link configly to your target
-    target_link_libraries(your_project_name PRIVATE configly)
-    ```
-
-**Using `FetchContent`:**
-
+### 1. Drop-in
+Just copy configly.hpp somewhere in your include path:
+```cpp
+#include <configly/configly.hpp>
+```
+That’s it.
+### 2. CMake (example)
+```cmake
+add_subdirectory(external/configly)
+target_link_libraries(your_target PRIVATE configly)
+```
+or with `FetchContent`:
 ```cmake
 include(FetchContent)
 
 FetchContent_Declare(
   configly
-  GIT_REPOSITORY [https://github.com/Yanujz/configly.git](https://github.com/Yanujz/configly.git)
-  GIT_TAG        main # Or a specific release tag
+  GIT_REPOSITORY https://github.com/Yanujz/configly.git
+  GIT_TAG        main
 )
 
 FetchContent_MakeAvailable(configly)
 
-target_link_libraries(your_project_name PRIVATE configly)
+target_link_libraries(your_target PRIVATE configly)
 ```
 
-## Quick Example
+## Basic Usage
 ```cpp
 #include <configly/configly.hpp>
 #include <iostream>
 
-// 1. Define your configuration struct
-// It must be trivially copyable
 struct MySettings {
-    int   speed;
-    bool  enabled;
+    int  speed;
+    bool enabled;
 };
 
-// 2. Define a type-safe callback function
-void onSpeedChange(const int& newSpeed, void* userData) {
-    std::cout << "Callback: Speed has been changed to " << newSpeed << std::endl;
+// callback for when speed changes
+void onSpeedChange(const int& newSpeed, void* /*userData*/) {
+    std::cout << "[callback] speed -> " << newSpeed << "\n";
 }
 
 int main() {
-    std::cout << "--- Configly Quick Example ---" << std::endl;
+    // get singleton
+    auto& cfg = Configly<MySettings>::instance();
 
-    // 3. Get the singleton instance
-    auto& settings = Configly<MySettings>::instance();
+    // set defaults (also initializes both buffers)
+    cfg.setDefault({100, false});
 
-    // 4. Set the default configuration
-    settings.setDefault({ 100, false });
+    // register callback on one field
+    cfg.onChange(&MySettings::speed, &onSpeedChange);
 
-    // 5. Register a callback to listen for changes
-    settings.onChange(&MySettings::speed, &onSpeedChange);
+    // read a single field (lock-free)
+    std::cout << "enabled = " << cfg.get(&MySettings::enabled) << "\n";
 
-    // 6. Set a new value (this will trigger the callback)
-    std.cout << "\nUpdating speed to 9000..." << std::endl;
-    settings.set(&MySettings::speed, 9000);
+    // update one field (will trigger callback)
+    std::cout << "setting speed to 9000...\n";
+    cfg.set(&MySettings::speed, 9000);
 
-    // 7. Get a value in a thread-safe manner
-    bool isEnabled = settings.get(&MySettings::enabled);
-    std.cout << "Current 'enabled' state: " << (isEnabled ? "true" : "false") << std::endl;
+    // read whole config
+    MySettings snapshot{};
+    cfg.getAll(snapshot);
+    std::cout << "snapshot.speed = " << snapshot.speed << "\n";
 
-    // 8. Restore all settings to their default values
-    std::cout << "\nRestoring defaults..." << std::endl;
-    settings.restoreDefaults(); // This will trigger the speed callback again
-
-    std::cout << "Speed after restore: " << settings.get(&MySettings::speed) << std::endl;
+    // restore defaults (also triggers callbacks for changed fields)
+    cfg.restoreDefaults();
+    std::cout << "after restore: speed = " << cfg.get(&MySettings::speed) << "\n";
 
     return 0;
 }
 ```
 
+## Threading / RT Notes
+- Reads (getAll, get)
+  - never block,
+    - may retry internally if a writer reused the buffer during copy,
+    - always return a consistent snapshot.
+- Writes (update, set)
+    - writers are serialized with an atomic_flag,
+    - intended for “rare” updates from lower-priority code,
+    - safe for concurrent readers.
+- Callbacks
+    - 1 callback per field (by design),
+    - stored in a fixed array (no heap),
+    - callback is called after the new config is published.
+
+If you need “writers must never spin”, you can wrap update(...) in your own “try” function and only call it from a safe context.
+
+
+## Save / Load Hooks
+You can plug in your own persistence:
+```cpp
+bool saveToFlash(const MySettings& cfg);
+bool loadFromFlash(MySettings& cfg);
+
+auto& c = Configly<MySettings>::instance();
+c.setSaveFunction(&saveToFlash);
+c.setLoadFunction(&loadFromFlash);
+
+c.save(); // reads current config and calls saveToFlash(...)
+c.load(); // calls loadFromFlash(...) and updates config if ok
+```
+This keeps the core header free of platform-specific code.
 
 ## Building & Testing
+If you cloned the repo with the tests:
 ```bash
-# 1. Clone the repository
 git clone https://github.com/Yanujz/configly.git
 cd configly
-
-# 2. Configure the project with CMake
-mkdir build
-cd build
+mkdir build && cd build
 cmake ..
-
-# 3. Compile the library and tests
 make
-
-# 4. Run the tests
-ctest --verbose
+ctest --output-on-failure
 ```
 
 ## License
@@ -139,12 +195,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 
 ## Contributing
-Contributions are welcome! If you find a bug or have a feature request, please open an issue or submit a pull request.
-
-### Steps to contribute
-
-1. Fork this repository.
-2. Create a new branch (**git checkout -b feature/your-feature-name**).
-3. Commit your changes (**git commit -am 'Add some feature'**).
-4. Push to the branch (**git push origin feature-name**).
-5. Create a new pull request.
+- Open an issue for bugs / questions.
+- PRs welcome, but keep it small and embedded-friendly.
+- No heavy dependencies, no heap, no magic codegen.
