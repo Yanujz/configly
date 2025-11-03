@@ -1,107 +1,138 @@
-# Configly - Flexible Configuration Management for C++
+# Configly - 
 
-Configly is a flexible, callback-driven configuration management library for C++. It allows you to manage, update, and restore your configuration parameters with ease. This library is ideal for applications that need dynamic configuration management and real-time notifications on changes.
+![Language](https://img.shields.io/badge/C%2B%2B-17-blue.svg)
+![License](https://img.shields.io/badge/License-MIT-green.svg)
+![Type](https://img.shields.io/badge/Type-Header--Only-orange.svg)
+![Build Status](https://img.shields.io/badge/Build-Passing-brightgreen.svg)
 
-Note: Configly is not thread-safe. If you need to use it in a multi-threaded environment, make sure to synchronize access to the configuration manually.
+**Configly** is a professional, header-only, type-safe, and thread-safe configuration manager for C++, designed specifically for embedded and real-time systems.
 
-## Features
-- Dynamic configuration management with flexible data types.
-- Real-time notifications via callbacks when parameters change.
-- Easy-to-use API for setting, getting, and restoring configuration parameters.
-- Ideal for embedded systems and applications where settings need to be managed efficiently.
+It is a scalpel, not a hammer. It is the ideal solution when you need to access shared configuration data from multiple contexts (e.g., RTOS tasks, ISRs) without introducing blocking, latency, or race conditions.
+
+## Core Philosophy: The Right Tool for Concurrency
+
+In many systems, configuration data is **written rarely** but **read frequently** from multiple high-priority tasks. Using a traditional mutex (a hammer) to protect this data is inefficient, as it can block a critical reader task even when no writing is occurring, leading to jitter and priority inversion.
+
+Configly uses a **seqlock** mechanism (a scalpel). This allows for virtually unlimited readers to access the configuration data **without ever being blocked**. Writers are also highly efficient, ensuring minimal impact on the system. This makes Configly perfect for high-performance, real-time applications.
+
+## Key Features
+
+* **Zero Heap Allocation**: Predictable, deterministic behavior suitable for high-reliability systems where dynamic memory is forbidden.
+* **Thread-Safe by Design**: Guarantees safe concurrent access with a lock-free read path.
+* **Type-Safe API**: Catches type-related errors at compile-time, not at runtime.
+* **Header-Only**: Just include `configly.hpp` in your project to get started.
+* **Modern C++**: Built with C++17 features for a clean, safe, and expressive API.
+* **Tested**: Includes a comprehensive test suite to verify correctness and concurrency safety.
 
 ## Installation
 
-### Using CMake
-To use **Configly** in your project, you can simply include it as a header-only library.
-d
-1. Clone this repository:
-```bash
-   git clone https://github.com/Yanujz/configly.git
-```
-2. Include the header file in your project:
-```
-#include "path/to/configly.hpp"
+Configly is a header-only library, making integration simple.
+
+### 1. Simple Integration (Copy-Paste)
+
+1.  Copy the `include/configly` directory into your project's include path.
+2.  Include the header in your source files:
+    ```cpp
+    #include <configly/configly.hpp>
+    ```
+
+### 2. CMake Integration (Recommended)
+
+You can integrate Configly using CMake's `add_subdirectory` or `FetchContent`.
+
+**Using `add_subdirectory`:**
+
+1.  Clone this repository into your project (e.g., in a `lib/` folder).
+2.  In your main `CMakeLists.txt`:
+    ```cmake
+    # Add the configly directory to your build
+    add_subdirectory(lib/configly)
+
+    # Link configly to your target
+    target_link_libraries(your_project_name PRIVATE configly)
+    ```
+
+**Using `FetchContent`:**
+
+```cmake
+include(FetchContent)
+
+FetchContent_Declare(
+  configly
+  GIT_REPOSITORY [https://github.com/Yanujz/configly.git](https://github.com/Yanujz/configly.git)
+  GIT_TAG        main # Or a specific release tag
+)
+
+FetchContent_MakeAvailable(configly)
+
+target_link_libraries(your_project_name PRIVATE configly)
 ```
 
-3.
-```
-add_subdirectory(path/to/configly)
-target_link_libraries(your-project-name configly)
-```
-## Example Usage
-Here is a basic example of how to use Configly to manage configuration parameters:
-
+## Quick Example
 ```cpp
+#include <configly/configly.hpp>
 #include <iostream>
-#include "configly.hpp"
 
-// Define the configuration structure that holds settings
-struct Config
-{
-    int   volume;  
-    float brightness;
+// 1. Define your configuration struct
+// It must be trivially copyable
+struct MySettings {
+    int   speed;
+    bool  enabled;
 };
 
-// Default configuration values
-Config defaultConfig = { 50, 0.75f };  // Default volume is 50, default brightness is 0.75
-Config userConfig;  // User-defined configuration (initially empty)
+// 2. Define a type-safe callback function
+void onSpeedChange(const int& newSpeed, void* userData) {
+    std::cout << "Callback: Speed has been changed to " << newSpeed << std::endl;
+}
 
-int main()
-{
-    // Set the default configuration values for the application
-    // Configly will initialize with these default settings
-    Configly<Config>::instance().setDefault(defaultConfig);
+int main() {
+    std::cout << "--- Configly Quick Example ---" << std::endl;
 
-    // Set custom save function. This function will be called when saving configuration.
-    // Replace the lambda body with your actual save logic.
-    Configly<Config>::instance().setSaveFunction([](const Config &cfg) -> bool {
-        // Your logic to save the configuration to disk or persistent storage
-        std::cout << "Saving configuration..." << std::endl;
-        return false;  // Return 'false' to indicate save failure or 'true' if successful
-    });
+    // 3. Get the singleton instance
+    auto& settings = Configly<MySettings>::instance();
 
-    // Set custom load function. This function will be called when loading the configuration.
-    // Replace the lambda body with your actual load logic.
-    Configly<Config>::instance().setLoadFunction([](Config &cfg) -> bool {
-        // Your logic to load the configuration from persistent storage
-        std::cout << "Loading configuration..." << std::endl;
-        return false;  // Return 'false' to indicate load failure or 'true' if successful
-    });
+    // 4. Set the default configuration
+    settings.setDefault({ 100, false });
 
-    // Modify the 'volume' configuration parameter using the 'set()' function
-    // This will set the volume to 80 in the user configuration
-    Configly<Config>::instance().set(&Config::volume, 80);
+    // 5. Register a callback to listen for changes
+    settings.onChange(&MySettings::speed, &onSpeedChange);
 
-    // Register callback functions to handle changes to the 'volume' and 'brightness' parameters.
-    // These functions will be called when the respective parameters are changed.
-    Configly<Config>::instance().onChange(&Config::volume, [](int &newVolume) -> void {
-        // Callback for volume changes
-        std::cout << "Volume changed to: " << newVolume << std::endl;
-    });
+    // 6. Set a new value (this will trigger the callback)
+    std.cout << "\nUpdating speed to 9000..." << std::endl;
+    settings.set(&MySettings::speed, 9000);
 
-    Configly<Config>::instance().onChange(&Config::brightness, [](float &brightness) -> void {
-        // Callback for brightness changes
-        std::cout << "Brightness changed to: " << brightness << std::endl;
-    });
+    // 7. Get a value in a thread-safe manner
+    bool isEnabled = settings.get(&MySettings::enabled);
+    std.cout << "Current 'enabled' state: " << (isEnabled ? "true" : "false") << std::endl;
 
-    // Trigger the callback by changing the 'volume' value to 90
-    // This will call the callback registered for 'volume'
-    Configly<Config>::instance().set(&Config::volume, 90);
+    // 8. Restore all settings to their default values
+    std::cout << "\nRestoring defaults..." << std::endl;
+    settings.restoreDefaults(); // This will trigger the speed callback again
 
-    // Trigger the callback by changing the 'brightness' value to 10
-    // This will call the callback registered for 'brightness'
-    Configly<Config>::instance().set(&Config::brightness, 10);
-
-    // Set all configuration values at once using 'setAll()'
-    // This will set the 'volume' to 10 and 'brightness' to 20 in the user configuration
-    Configly<Config>::instance().setAll({ 10, 20 });
+    std::cout << "Speed after restore: " << settings.get(&MySettings::speed) << std::endl;
 
     return 0;
 }
-
 ```
-In this example, the Config struct holds configuration parameters like volume and brightness. You can set defaults, modify values, and register callbacks to listen for changes in real-time.
+
+
+## Building & Testing
+```bash
+# 1. Clone the repository
+git clone https://github.com/Yanujz/configly.git
+cd configly
+
+# 2. Configure the project with CMake
+mkdir build
+cd build
+cmake ..
+
+# 3. Compile the library and tests
+make
+
+# 4. Run the tests
+ctest --verbose
+```
 
 ## License
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
@@ -113,7 +144,7 @@ Contributions are welcome! If you find a bug or have a feature request, please o
 ### Steps to contribute
 
 1. Fork this repository.
-2. Create a new branch (**git checkout -b feature-name**).
-3. Commit your changes (**git commit -am 'Add feature'**).
+2. Create a new branch (**git checkout -b feature/your-feature-name**).
+3. Commit your changes (**git commit -am 'Add some feature'**).
 4. Push to the branch (**git push origin feature-name**).
 5. Create a new pull request.
