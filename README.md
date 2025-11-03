@@ -1,120 +1,200 @@
-# Configly - Flexible Configuration Management for C++
+# Configly
 
-Configly is a flexible, callback-driven configuration management library for C++. It allows you to manage, update, and restore configuration parameters with ease. This library is ideal for applications that require dynamic configuration management and real-time notifications for configuration changes.
+![Language](https://img.shields.io/badge/C%2B%2B-17-blue.svg)
+![License](https://img.shields.io/badge/License-MIT-green.svg)
+![Type](https://img.shields.io/badge/Type-Header--Only-orange.svg)
+![Build Status](https://img.shields.io/badge/Build-Passing-brightgreen.svg)
 
-Configly provides a centralized approach to configuration, enabling the sharing of configuration state across the entire application. All components within the program can access and modify the configuration without needing to duplicate or manually pass data. Any changes made to the configuration are immediately visible throughout the program, making it easier to handle dynamic parameters.
+**Configly** is a small, header-only configuration manager for C++ aimed at embedded / real-time code where:
+
+- config is **read very often** (fast paths, high-priority tasks, ISRs),
+- config is **written rarely** (CLI, comms, low-priority tasks),
+- you **cannot afford** to block readers just because someone is updating a value.
+
+It gives you **lock-free reads** over an entire config struct, while still letting you update the whole thing or a single field and get change callbacks.
+
+No threads spawned, no heap, no RTTI, no nonsense.
+
+---
+
+## Why?
+
+The usual approach for “shared config” is:
+
+- put everything in a struct,
+- guard it with a mutex,
+- hope readers don’t block.
+
+That works on desktops, but on MCUs / RTOS you can’t have a high-priority task blocked because a low-priority task was updating a value.
+
+Configly solves that with a **double-buffer + per-buffer sequence** design:
+
+- writers write into the inactive buffer,
+- mark it stable,
+- flip an atomic index,
+- readers always read a stable snapshot,
+- if a reader notices a race, it just retries (no blocking).
+
+So: **readers are never blocked by writers**.
+
+---
+
+## Key Features
+
+- **Header-only** — just drop in `configly.hpp`.
+- **C++17** — uses structured bindings / `std::atomic` / `std::array`.
+- **Trivially copyable configs** — simple POD-style structs.
+- **Lock-free read path** — readers don’t take locks.
+- **Double-buffered + seqcheck** — prevents torn reads even under heavy writers.
+- **Per-field callbacks** — run code when a specific member changes.
+- **No heap** — suitable for embedded / safety-leaning targets.
+- **Optional save/load hooks** — plug in flash/EEPROM/persistent storage.
+
+---
+
+## How It Works (short)
+
+1. You define a struct, e.g.:
+
+   ```cpp
+   struct AppConfig {
+       uint32_t baud;
+       bool     logging;
+   };
+2. You tell Configly what the defaults are.
+3. Readers call getAll(...) or get(&AppConfig::baud) — these are lock-free.
+4. Writers call update(...) (whole struct) or set(...) (single member).
+5. If a field changed and you registered a callback for it, Configly calls it.
+
+Internally it keeps two copies of your struct and an atomic “which one is current” index. Updates go to the inactive one, then the index flips. A per-buffer sequence number makes sure a reader never consumes a half-written buffer.
 
 
-## Features
-- Dynamic configuration management with flexible data types.
-- Real-time notifications via callbacks when parameters change.
-- Easy-to-use API for setting, getting, and restoring configuration parameters.
-- Ideal for embedded systems and applications where settings need to be managed efficiently.
+## Requirements
+- C++17 or newer
+- `std::atomic` available
+- Struct must be trivially copyable (most “config” structs are)
+
 
 ## Installation
-
-### Using CMake
-To use **Configly** in your project, you can simply include it as a header-only library.
-d
-1. Clone this repository:
-```bash
-   git clone https://github.com/Yanujz/configly.git
-```
-2. Include the header file in your project:
-```
-#include "path/to/configly.hpp"
-```
-
-3.
-```
-add_subdirectory(path/to/configly)
-target_link_libraries(your-project-name configly)
-```
-## Example Usage
-Here is a basic example of how to use Configly to manage configuration parameters:
-
+### 1. Drop-in
+Just copy configly.hpp somewhere in your include path:
 ```cpp
-#include <iostream>
-#include "configly.hpp"
+#include <configly/configly.hpp>
+```
+That’s it.
+### 2. CMake (example)
+```cmake
+add_subdirectory(external/configly)
+target_link_libraries(your_target PRIVATE configly)
+```
+or with `FetchContent`:
+```cmake
+include(FetchContent)
 
-// Define the configuration structure that holds settings
-struct Config
-{
-    int   volume;  
-    float brightness;
+FetchContent_Declare(
+  configly
+  GIT_REPOSITORY https://github.com/Yanujz/configly.git
+  GIT_TAG        main
+)
+
+FetchContent_MakeAvailable(configly)
+
+target_link_libraries(your_target PRIVATE configly)
+```
+
+## Basic Usage
+```cpp
+#include <configly/configly.hpp>
+#include <iostream>
+
+struct MySettings {
+    int  speed;
+    bool enabled;
 };
 
-// Default configuration values
-Config defaultConfig = { 50, 0.75f };  // Default volume is 50, default brightness is 0.75
-Config userConfig;  // User-defined configuration (initially empty)
+// callback for when speed changes
+void onSpeedChange(const int& newSpeed, void* /*userData*/) {
+    std::cout << "[callback] speed -> " << newSpeed << "\n";
+}
 
-int main()
-{
-    // Set the default configuration values for the application
-    // Configly will initialize with these default settings
-    Configly<Config>::instance().setDefault(defaultConfig);
+int main() {
+    // get singleton
+    auto& cfg = Configly<MySettings>::instance();
 
-    // Set custom save function. This function will be called when saving configuration.
-    // Replace the lambda body with your actual save logic.
-    Configly<Config>::instance().setSaveFunction([](const Config &cfg) -> bool {
-        // Your logic to save the configuration to disk or persistent storage
-        std::cout << "Saving configuration..." << std::endl;
-        return false;  // Return 'false' to indicate save failure or 'true' if successful
-    });
+    // set defaults (also initializes both buffers)
+    cfg.setDefault({100, false});
 
-    // Set custom load function. This function will be called when loading the configuration.
-    // Replace the lambda body with your actual load logic.
-    Configly<Config>::instance().setLoadFunction([](Config &cfg) -> bool {
-        // Your logic to load the configuration from persistent storage
-        std::cout << "Loading configuration..." << std::endl;
-        return false;  // Return 'false' to indicate load failure or 'true' if successful
-    });
+    // register callback on one field
+    cfg.onChange(&MySettings::speed, &onSpeedChange);
 
-    // Modify the 'volume' configuration parameter using the 'set()' function
-    // This will set the volume to 80 in the user configuration
-    Configly<Config>::instance().set(&Config::volume, 80);
+    // read a single field (lock-free)
+    std::cout << "enabled = " << cfg.get(&MySettings::enabled) << "\n";
 
-    // Register callback functions to handle changes to the 'volume' and 'brightness' parameters.
-    // These functions will be called when the respective parameters are changed.
-    Configly<Config>::instance().onChange(&Config::volume, [](int &newVolume) -> void {
-        // Callback for volume changes
-        std::cout << "Volume changed to: " << newVolume << std::endl;
-    });
+    // update one field (will trigger callback)
+    std::cout << "setting speed to 9000...\n";
+    cfg.set(&MySettings::speed, 9000);
 
-    Configly<Config>::instance().onChange(&Config::brightness, [](float &brightness) -> void {
-        // Callback for brightness changes
-        std::cout << "Brightness changed to: " << brightness << std::endl;
-    });
+    // read whole config
+    MySettings snapshot{};
+    cfg.getAll(snapshot);
+    std::cout << "snapshot.speed = " << snapshot.speed << "\n";
 
-    // Trigger the callback by changing the 'volume' value to 90
-    // This will call the callback registered for 'volume'
-    Configly<Config>::instance().set(&Config::volume, 90);
-
-    // Trigger the callback by changing the 'brightness' value to 10
-    // This will call the callback registered for 'brightness'
-    Configly<Config>::instance().set(&Config::brightness, 10);
-
-    // Set all configuration values at once using 'setAll()'
-    // This will set the 'volume' to 10 and 'brightness' to 20 in the user configuration
-    Configly<Config>::instance().setAll({ 10, 20 });
+    // restore defaults (also triggers callbacks for changed fields)
+    cfg.restoreDefaults();
+    std::cout << "after restore: speed = " << cfg.get(&MySettings::speed) << "\n";
 
     return 0;
 }
-
 ```
-In this example, the Config struct holds configuration parameters like volume and brightness. You can set defaults, modify values, and register callbacks to listen for changes in real-time.
+
+## Threading / RT Notes
+- Reads (getAll, get)
+  - never block,
+    - may retry internally if a writer reused the buffer during copy,
+    - always return a consistent snapshot.
+- Writes (update, set)
+    - writers are serialized with an atomic_flag,
+    - intended for “rare” updates from lower-priority code,
+    - safe for concurrent readers.
+- Callbacks
+    - 1 callback per field (by design),
+    - stored in a fixed array (no heap),
+    - callback is called after the new config is published.
+
+If you need “writers must never spin”, you can wrap update(...) in your own “try” function and only call it from a safe context.
+
+
+## Save / Load Hooks
+You can plug in your own persistence:
+```cpp
+bool saveToFlash(const MySettings& cfg);
+bool loadFromFlash(MySettings& cfg);
+
+auto& c = Configly<MySettings>::instance();
+c.setSaveFunction(&saveToFlash);
+c.setLoadFunction(&loadFromFlash);
+
+c.save(); // reads current config and calls saveToFlash(...)
+c.load(); // calls loadFromFlash(...) and updates config if ok
+```
+This keeps the core header free of platform-specific code.
+
+## Building & Testing
+If you cloned the repo with the tests:
+```bash
+git clone https://github.com/Yanujz/configly.git
+cd configly
+mkdir build && cd build
+cmake ..
+make
+ctest --output-on-failure
+```
 
 ## License
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 
 ## Contributing
-Contributions are welcome! If you find a bug or have a feature request, please open an issue or submit a pull request.
-
-### Steps to contribute
-
-1. Fork this repository.
-2. Create a new branch (**git checkout -b feature-name**).
-3. Commit your changes (**git commit -am 'Add feature'**).
-4. Push to the branch (**git push origin feature-name**).
-5. Create a new pull request.
+- Open an issue for bugs / questions.
+- PRs welcome, but keep it small and embedded-friendly.
+- No heavy dependencies, no heap, no magic codegen.
